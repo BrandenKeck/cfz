@@ -3,6 +3,7 @@ from moviepy.editor import *
 from selenium import webdriver
 from pexelsapi.pexels import Pexels
 from langchain.llms import GPT4All, LlamaCpp
+from diffusers import StableDiffusionPipeline
 from langchain import PromptTemplate
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -10,6 +11,66 @@ from webdriver_manager.chrome import ChromeDriverManager
 from langchain.chains.summarize import load_summarize_chain
 from webdriver_manager.core.driver_cache import DriverCacheManager
 from langchain.text_splitter import RecursiveCharacterTextSplitter
+
+class CFZSummarizerModel():
+    def __init__(self, gpu=True,
+                 model="./models/llamacpp-mistral-openorca-7b.gguf",
+                 chunk_size=4000, 
+                 chunk_overlap=160):
+        self.chunk_size=chunk_size
+        self.chunk_overlap=chunk_overlap
+        self.model = model
+        self.get_model()
+    def get_model(self):
+        self.llm = LlamaCpp(
+                model_path=self.model, # should be "./models/llamacpp-mistral-openorca-7b.gguf"
+                n_gpu_layers=33,
+                n_batch=2080,
+                n_ctx=2080,
+                f16_kv=True
+            )
+        # GPT4All(
+        #     model=model # should be "./models/gpt4all-mistral-7b.gguf"
+        # )
+    def process(self, input):
+        map_prompt_template = """
+            Write a summary of this chunk of text that includes the main points and any important details.
+            {text}
+            """
+        map_prompt = PromptTemplate(template=map_prompt_template, input_variables=["text"])
+        combine_prompt_template = """
+            Please summarize the following text in essay form with at least six paragraphs of content.
+            The essay should include a proper introduction, body, and conclusion:
+            ```{text}```
+            """
+        combine_prompt = PromptTemplate(
+            template=combine_prompt_template, input_variables=["text"]
+        )
+        splitter = RecursiveCharacterTextSplitter(
+            chunk_size=self.chunk_size,
+            chunk_overlap=self.chunk_overlap,
+            length_function=len,
+            is_separator_regex=False
+        )
+        dox = splitter.create_documents([input])
+        print(len(dox))
+        map_reduce_chain = load_summarize_chain(
+            self.llm,
+            chain_type="map_reduce",
+            map_prompt=map_prompt,
+            combine_prompt=combine_prompt
+        )
+        summary = map_reduce_chain(dox)
+        return summary
+    
+
+class CFZStableDiffusion():
+    def __init__(self):
+        self.model = StableDiffusionPipeline.from_pretrained("./models/stable_diffusion_v1.4/")
+        self.model.to("cuda")
+    def generate_images(self, desc, title):
+        image = self.model(desc).images[0]
+        image.save(f"{title}.png")
 
 
 class CFZVideoDriver():
@@ -50,53 +111,6 @@ class CFZVideoDriver():
         elif 2 <= t <= 4: return (-20*2, -20*2)
         else: return (-20*2 + 20*(t-4), -20*2 + 20*(t-4))
 
-class CFZLanguageModel():
-    def __init__(self, 
-                 model="./models/gpt4all-mistral-7b.gguf",
-                 chunk_size=4000, 
-                 chunk_overlap=160,
-                 gpu=True):
-        self.chunk_size=chunk_size
-        self.chunk_overlap=chunk_overlap
-        if gpu:
-            self.llm = LlamaCpp(
-                model_path="./models/llamacpp-mistral-7b.gguf",
-                n_gpu_layers=33,
-                n_batch=512,
-                n_ctx=8192,
-                f16_kv=True
-            )
-        else: self.llm = GPT4All(model=model)
-    def process(self, input):
-        map_prompt_template = """
-            Write a summary of this chunk of text that includes the main points and any important details.
-            {text}
-            """
-        map_prompt = PromptTemplate(template=map_prompt_template, input_variables=["text"])
-        combine_prompt_template = """
-            Please summarize the following text in essay form with at least six paragraphs of content.
-            The essay should include a proper introduction, body, and conclusion:
-            ```{text}```
-            """
-        combine_prompt = PromptTemplate(
-            template=combine_prompt_template, input_variables=["text"]
-        )
-        splitter = RecursiveCharacterTextSplitter(
-            chunk_size=self.chunk_size,
-            chunk_overlap=self.chunk_overlap,
-            length_function=len,
-            is_separator_regex=False
-        )
-        dox = splitter.create_documents([input])
-        print(len(dox))
-        map_reduce_chain = load_summarize_chain(
-            self.llm,
-            chain_type="map_reduce",
-            map_prompt=map_prompt,
-            combine_prompt=combine_prompt
-        )
-        summary = map_reduce_chain(dox)
-        return summary
 
 class CFZImageScraper():
     def __init__(self):
@@ -120,6 +134,7 @@ class CFZImageScraper():
             response = requests.get(img_url, stream=True)
             with open(image_path, 'wb') as outfile:
                 outfile.write(response.content)
+
 
 class CFZWebScraper():
     def __init__(self):
@@ -147,6 +162,7 @@ class CFZWebScraper():
         wiki = self.driver.find_element("xpath", 
             f"//main[@id='content']")
         return wiki.text
+
 
 class CFZYoutubeAPI():
 
